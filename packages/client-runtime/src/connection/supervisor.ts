@@ -380,7 +380,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         case "ConnectRequested":
           break;
         case "Wakeup":
-          if (next.reason === "application-active-reconnect") {
+          if (
+            next.reason === "application-active-reconnect" ||
+            // The socket being opened is bound to the interface this handoff
+            // replaced, so restart the attempt on the new one.
+            next.reason === "network-path-changed"
+          ) {
             return true;
           }
           if (next.reason === "credentials-changed" && target._tag === "RelayConnectionTarget") {
@@ -411,23 +416,23 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             yield* logManagedRelayAccountChange;
             return false;
           }
-          if (next.reason === "application-active-reconnect") {
-            // Mobile operating systems commonly suspend sockets without
-            // delivering a close event. A long background resume deliberately
-            // replaces that lease and starts a fresh attempt without backoff.
-            return true;
-          }
           if (
-            next.reason === "application-active" ||
-            next.reason === "application-active-probe" ||
+            next.reason === "application-active-reconnect" ||
             next.reason === "network-path-changed"
           ) {
+            // Mobile operating systems commonly suspend sockets without
+            // delivering a close event. A long background resume, or a handoff
+            // to a different network interface, deliberately replaces that
+            // lease and starts a fresh attempt without backoff.
+            return true;
+          }
+          if (next.reason === "application-active" || next.reason === "application-active-probe") {
             const probe = yield* lease.session.probe.pipe(
               Effect.timeoutOrElse({
                 duration:
-                  next.reason === "application-active"
-                    ? CONNECTION_PROBE_TIMEOUT
-                    : MOBILE_CONNECTION_PROBE_TIMEOUT,
+                  next.reason === "application-active-probe"
+                    ? MOBILE_CONNECTION_PROBE_TIMEOUT
+                    : CONNECTION_PROBE_TIMEOUT,
                 orElse: () =>
                   Effect.fail(
                     new ConnectionTransientError({
@@ -466,7 +471,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
                   }
                   break;
                 case "Wakeup":
-                  if (probeEvent.signal.reason === "application-active-reconnect") {
+                  if (
+                    probeEvent.signal.reason === "application-active-reconnect" ||
+                    probeEvent.signal.reason === "network-path-changed"
+                  ) {
                     yield* Fiber.interrupt(probe);
                     return true;
                   }
@@ -618,8 +626,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           switch (next._tag) {
             case "Wakeup":
               if (next.reason === "network-path-changed") {
-                // Advisory only: a flapping interface must not cut the backoff
-                // delay short and hammer the server.
+                // There is no lease to replace during backoff, and cutting the
+                // delay short would let a flapping interface hammer the server.
                 break;
               }
               return ConnectionWakeups.isApplicationActiveWakeup(next.reason);
@@ -640,8 +648,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       if (next._tag !== "Wakeup") {
         return false;
       }
-      // There is no lease to probe while idle, offline, or blocked, so an
-      // advisory path change must not wake the loop for nothing.
+      // There is no lease to replace while idle, offline, or blocked, so a
+      // path change must not wake the loop for nothing.
       if (next.reason !== "network-path-changed") {
         return ConnectionWakeups.isApplicationActiveWakeup(next.reason);
       }

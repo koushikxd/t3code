@@ -1108,15 +1108,11 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("keeps a healthy session when the network path changes", () =>
+  it.effect("replaces a connected session when the network path changes", () =>
     Effect.gen(function* () {
       const probeCount = yield* Ref.make(0);
-      const probed = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
-        probe: () =>
-          Ref.update(probeCount, (count) => count + 1).pipe(
-            Effect.andThen(Deferred.succeed(probed, undefined)),
-          ),
+        probe: () => Ref.update(probeCount, (count) => count + 1),
       });
       const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
         initiallyDesired: true,
@@ -1124,41 +1120,43 @@ describe("EnvironmentSupervisor", () => {
 
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       yield* harness.wake("network-path-changed");
-      yield* Deferred.await(probed);
+      // Attempt 1 on the new generation proves the replacement skipped backoff.
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2 && state.attempt === 1,
+      );
 
-      expect(yield* Ref.get(probeCount)).toBe(1);
-      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
-      expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("connected");
+      // The old interface can still answer during the handoff, so a probe
+      // would report a socket that is about to die as healthy.
+      expect(yield* Ref.get(probeCount)).toBe(0);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
     }),
   );
 
-  it.effect("reconnects without backoff when a network path change finds a dead socket", () =>
+  it.effect("restarts an in-flight attempt when the network path changes", () =>
     Effect.gen(function* () {
-      const probeStarted = yield* Deferred.make<void>();
+      const opening = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
-        probe: (attempt) =>
+        ready: (attempt) =>
           attempt === 1
-            ? Deferred.succeed(probeStarted, undefined).pipe(Effect.andThen(Effect.never))
+            ? Deferred.succeed(opening, undefined).pipe(Effect.andThen(Effect.never))
             : Effect.void,
       });
       const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
 
-      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* Deferred.await(opening);
       yield* harness.wake("network-path-changed");
-      yield* Deferred.await(probeStarted);
-      // The handoff probe uses the short mobile tolerance, then skips the
-      // first backoff rung: no further clock advance is needed.
-      yield* TestClock.adjust("3 seconds");
       yield* awaitState(
         supervisor.state,
-        (state) => state.phase === "connected" && state.generation === 2 && state.attempt === 1,
+        (state) => state.phase === "connected" && state.attempt === 1,
       );
 
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
-    }).pipe(Effect.provide(TestClock.layer())),
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }),
   );
 
   it.effect("does not let a flapping network path shorten the retry backoff", () =>
