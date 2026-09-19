@@ -22,12 +22,19 @@ closure. Treating every foreground event as a reconnect delays healthy attempts;
 treating every resume as harmless leaves suspended sockets stuck.
 
 A Wi-Fi/cellular handoff is the same problem without a foreground event: the
-socket stays bound to a dead route while connectivity still reports online, so
-[mobile](../../apps/mobile/src/connection/platform.ts) emits a
-`network-path-changed` wakeup when the interface type changes. Only a connected
-supervisor acts on it, by probing the lease it already holds. Every other phase
-must ignore it, because a flapping interface would otherwise shorten backoff and
+socket stays bound to the old interface while connectivity still reports online,
+so [mobile](../../apps/mobile/src/connection/platform.ts) emits a
+`network-path-changed` wakeup when the default interface type changes. A
+connecting or connected supervisor replaces its lease; every other phase must
+ignore it, because a flapping interface would otherwise shorten backoff and
 hammer the server for no gain.
+
+Replacement rather than a probe, because a probe cannot answer the question.
+Android reports only the default network, so after a handoff the old interface
+goes unobserved. During the handoff grace period it still answers, so the probe
+passes; when it dies moments later nothing reports it, and recovery falls back
+to the transport ping timeout. The interface change is itself the evidence that
+the existing socket is doomed.
 
 The [registry](../../packages/client-runtime/src/connection/registry.ts) scopes
 connections by environment. An involuntary disconnect retains the registration

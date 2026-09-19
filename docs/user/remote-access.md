@@ -120,11 +120,11 @@ scheme uses HTTP, so include `https://` when your server uses HTTPS.
 
 ### Mobile network changes
 
-When you switch between Wi-Fi and cellular, the app checks the environment and
-reconnects it if the old connection no longer responds, usually within a few
-seconds. You do not need to reconnect by hand. A LAN address still only works
-while the phone is on that network: to keep working after you leave it, connect
-through T3 Connect, Tailscale, or another reachable endpoint.
+When you switch between Wi-Fi and cellular, the app reconnects the environment
+over the new network, usually within a few seconds. You do not need to reconnect
+by hand. A LAN address still only works while the phone is on that network: to
+keep working after you leave it, connect through T3 Connect, Tailscale, or
+another reachable endpoint.
 
 ## Desktop-managed SSH
 
