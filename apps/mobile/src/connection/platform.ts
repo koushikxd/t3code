@@ -32,6 +32,7 @@ import { appAtomRegistry } from "../state/atom-registry";
 import { clearThreadOutboxEnvironment } from "../state/thread-outbox-removal";
 import { clearComposerDraftsEnvironment } from "../state/use-composer-drafts";
 import { mobileApplicationActiveWakeup } from "./app-state-wakeups";
+import { type NetworkPath, observeNetworkPath } from "./network-path";
 import { connectionStorageLayer } from "./storage";
 
 function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "online" {
@@ -87,28 +88,56 @@ const connectivityLayer = Connectivity.layer({
 });
 
 const wakeupsLayer = Wakeups.layer({
-  changes: Stream.merge(
-    Stream.callback<"application-active-probe" | "application-active-reconnect">((queue) =>
-      Effect.acquireRelease(
-        Effect.sync(() => {
-          let backgroundedAtMs = AppState.currentState === "background" ? Date.now() : null;
-          return AppState.addEventListener("change", (state) => {
-            if (state === "background") {
-              backgroundedAtMs = Date.now();
-              return;
-            }
-            if (state === "active") {
-              Queue.offerUnsafe(queue, mobileApplicationActiveWakeup(backgroundedAtMs, Date.now()));
-              backgroundedAtMs = null;
-            }
-          });
-        }),
-        (subscription) => Effect.sync(() => subscription.remove()),
-      ).pipe(Effect.asVoid),
-    ),
-    managedRelayAccountChanges(appAtomRegistry).pipe(
-      Stream.map(() => "credentials-changed" as const),
-    ),
+  changes: Stream.mergeAll(
+    [
+      Stream.callback<"application-active-probe" | "application-active-reconnect">((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            let backgroundedAtMs = AppState.currentState === "background" ? Date.now() : null;
+            return AppState.addEventListener("change", (state) => {
+              if (state === "background") {
+                backgroundedAtMs = Date.now();
+                return;
+              }
+              if (state === "active") {
+                Queue.offerUnsafe(
+                  queue,
+                  mobileApplicationActiveWakeup(backgroundedAtMs, Date.now()),
+                );
+                backgroundedAtMs = null;
+              }
+            });
+          }),
+          (subscription) => Effect.sync(() => subscription.remove()),
+        ).pipe(Effect.asVoid),
+      ),
+      Stream.callback<"network-path-changed">((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            // A Wi-Fi/cellular handoff keeps isConnected true while the socket
+            // stays bound to the dead route. Probe now instead of waiting out
+            // the ~20s transport ping timeout.
+            let path: NetworkPath | null = null;
+            return Network.addNetworkStateListener((state) => {
+              const observed = observeNetworkPath(path, state.type);
+              path = observed.path;
+              if (
+                observed.changed &&
+                state.isConnected === true &&
+                AppState.currentState === "active"
+              ) {
+                Queue.offerUnsafe(queue, "network-path-changed");
+              }
+            });
+          }),
+          (subscription) => Effect.sync(() => subscription.remove()),
+        ).pipe(Effect.asVoid),
+      ),
+      managedRelayAccountChanges(appAtomRegistry).pipe(
+        Stream.map(() => "credentials-changed" as const),
+      ),
+    ],
+    { concurrency: "unbounded" },
   ),
 });
 

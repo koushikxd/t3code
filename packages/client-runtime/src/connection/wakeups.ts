@@ -6,7 +6,10 @@ export type ConnectionWakeup =
   | "application-active"
   | "application-active-probe"
   | "application-active-reconnect"
-  | "credentials-changed";
+  | "credentials-changed"
+  // Advisory. The network interface changed underneath a socket that may still
+  // look alive. Only a connected supervisor acts on it, by probing its lease.
+  | "network-path-changed";
 
 export function isApplicationActiveWakeup(reason: ConnectionWakeup): boolean {
   return (

@@ -417,13 +417,17 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             // replaces that lease and starts a fresh attempt without backoff.
             return true;
           }
-          if (next.reason === "application-active" || next.reason === "application-active-probe") {
+          if (
+            next.reason === "application-active" ||
+            next.reason === "application-active-probe" ||
+            next.reason === "network-path-changed"
+          ) {
             const probe = yield* lease.session.probe.pipe(
               Effect.timeoutOrElse({
                 duration:
-                  next.reason === "application-active-probe"
-                    ? MOBILE_CONNECTION_PROBE_TIMEOUT
-                    : CONNECTION_PROBE_TIMEOUT,
+                  next.reason === "application-active"
+                    ? CONNECTION_PROBE_TIMEOUT
+                    : MOBILE_CONNECTION_PROBE_TIMEOUT,
                 orElse: () =>
                   Effect.fail(
                     new ConnectionTransientError({
@@ -613,6 +617,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           const next = yield* Queue.take(signals);
           switch (next._tag) {
             case "Wakeup":
+              if (next.reason === "network-path-changed") {
+                // Advisory only: a flapping interface must not cut the backoff
+                // delay short and hammer the server.
+                break;
+              }
               return ConnectionWakeups.isApplicationActiveWakeup(next.reason);
             case "ConnectRequested":
             case "DisconnectRequested":
@@ -625,11 +634,19 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
-  const waitForSignal = Queue.take(signals).pipe(
-    Effect.map(
-      (next) => next._tag === "Wakeup" && ConnectionWakeups.isApplicationActiveWakeup(next.reason),
-    ),
-  );
+  const waitForSignal = Effect.gen(function* () {
+    for (;;) {
+      const next = yield* Queue.take(signals);
+      if (next._tag !== "Wakeup") {
+        return false;
+      }
+      // There is no lease to probe while idle, offline, or blocked, so an
+      // advisory path change must not wake the loop for nothing.
+      if (next.reason !== "network-path-changed") {
+        return ConnectionWakeups.isApplicationActiveWakeup(next.reason);
+      }
+    }
+  });
 
   const run = Effect.fnUntraced(function* () {
     let failureCount = 0;

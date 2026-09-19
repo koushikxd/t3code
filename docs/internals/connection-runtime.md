@@ -21,6 +21,14 @@ suspension forces replacement because the OS can kill a socket without reporting
 closure. Treating every foreground event as a reconnect delays healthy attempts;
 treating every resume as harmless leaves suspended sockets stuck.
 
+A Wi-Fi/cellular handoff is the same problem without a foreground event: the
+socket stays bound to a dead route while connectivity still reports online, so
+[mobile](../../apps/mobile/src/connection/platform.ts) emits a
+`network-path-changed` wakeup when the interface type changes. Only a connected
+supervisor acts on it, by probing the lease it already holds. Every other phase
+must ignore it, because a flapping interface would otherwise shorten backoff and
+hammer the server for no gain.
+
 The [registry](../../packages/client-runtime/src/connection/registry.ts) scopes
 connections by environment. An involuntary disconnect retains the registration
 and cached data. Explicit removal closes the scope and clears credentials,
