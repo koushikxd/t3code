@@ -10,19 +10,21 @@ export interface ObservedNetworkPath {
 
 /**
  * Decides whether a network state event is a real interface handoff, given the
- * last known interface.
+ * last known interface. Pass `undefined` for a disconnected or indeterminate
+ * state.
  */
 export function observeNetworkPath(
   previous: NetworkPath | null,
   next: NetworkPath | undefined,
 ): ObservedNetworkPath {
-  // An unreported or indeterminate interface says nothing about the route, so
-  // clear the baseline instead of probing. A WIFI -> UNKNOWN -> WIFI blip then
-  // costs one probe on the way back rather than two.
   if (next === undefined || next === "UNKNOWN") {
     return { path: null, changed: false };
   }
-  // The first known interface probes too: the listener only fires on change,
-  // so that first event may itself be the handoff.
+  // With no baseline there is nothing to hand off from: either this is the
+  // first event of the process, or connectivity just returned and the
+  // supervisor is already reconnecting on this interface.
+  if (previous === null) {
+    return { path: next, changed: false };
+  }
   return { path: next, changed: next !== previous };
 }

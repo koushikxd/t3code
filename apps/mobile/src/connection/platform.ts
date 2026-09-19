@@ -115,17 +115,17 @@ const wakeupsLayer = Wakeups.layer({
         Effect.acquireRelease(
           Effect.sync(() => {
             // A Wi-Fi/cellular handoff keeps isConnected true while the socket
-            // stays bound to the dead route. Probe now instead of waiting out
-            // the ~20s transport ping timeout.
+            // stays bound to the interface it was opened on. Android reports
+            // only the default network, so once it moves on we never hear that
+            // the old one died.
             let path: NetworkPath | null = null;
             return Network.addNetworkStateListener((state) => {
-              const observed = observeNetworkPath(path, state.type);
+              const observed = observeNetworkPath(
+                path,
+                state.isConnected === true ? state.type : undefined,
+              );
               path = observed.path;
-              if (
-                observed.changed &&
-                state.isConnected === true &&
-                AppState.currentState === "active"
-              ) {
+              if (observed.changed && AppState.currentState === "active") {
                 Queue.offerUnsafe(queue, "network-path-changed");
               }
             });
