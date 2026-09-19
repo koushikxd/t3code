@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { observeNetworkPath } from "./network-path";
+import { makeNetworkPathTracker, observeNetworkPath } from "./network-path";
 
 describe("observeNetworkPath", () => {
   it("ignores a repeated interface", () => {
@@ -26,5 +26,35 @@ describe("observeNetworkPath", () => {
       path: "CELLULAR",
       changed: false,
     });
+  });
+});
+
+describe("makeNetworkPathTracker", () => {
+  it("reports the first handoff after a seeded baseline", () => {
+    const tracker = makeNetworkPathTracker();
+    tracker.seed("WIFI");
+    expect(tracker.observe("CELLULAR", true)).toBe(true);
+  });
+
+  it("ignores a seed that lost the race with a listener event", () => {
+    const tracker = makeNetworkPathTracker();
+    expect(tracker.observe("CELLULAR", true)).toBe(false);
+    tracker.seed("WIFI");
+    expect(tracker.observe("CELLULAR", true)).toBe(false);
+  });
+
+  it("holds a handoff that lands while inactive until the app is active", () => {
+    const tracker = makeNetworkPathTracker();
+    tracker.seed("WIFI");
+    expect(tracker.observe("CELLULAR", false)).toBe(false);
+    expect(tracker.activate()).toBe(true);
+    expect(tracker.activate()).toBe(false);
+  });
+
+  it("does not wake on activation without a handoff", () => {
+    const tracker = makeNetworkPathTracker();
+    tracker.seed("WIFI");
+    expect(tracker.observe("WIFI", false)).toBe(false);
+    expect(tracker.activate()).toBe(false);
   });
 });
