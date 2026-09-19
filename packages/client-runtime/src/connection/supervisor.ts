@@ -380,13 +380,15 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         case "ConnectRequested":
           break;
         case "Wakeup":
-          if (
-            next.reason === "application-active-reconnect" ||
-            // The socket being opened is bound to the interface this handoff
-            // replaced, so restart the attempt on the new one.
-            next.reason === "network-path-changed"
-          ) {
+          if (next.reason === "application-active-reconnect") {
             return true;
+          }
+          if (next.reason === "network-path-changed") {
+            // The socket being opened is bound to the interface this handoff
+            // replaced, so restart the attempt on the new one. The ladder
+            // carries over: a flapping interface must not pin the delay to its
+            // first rung.
+            return false;
           }
           if (next.reason === "credentials-changed" && target._tag === "RelayConnectionTarget") {
             yield* logManagedRelayAccountChange;
@@ -416,15 +418,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             yield* logManagedRelayAccountChange;
             return false;
           }
-          if (
-            next.reason === "application-active-reconnect" ||
-            next.reason === "network-path-changed"
-          ) {
+          if (next.reason === "application-active-reconnect") {
             // Mobile operating systems commonly suspend sockets without
-            // delivering a close event. A long background resume, or a handoff
-            // to a different network interface, deliberately replaces that
-            // lease and starts a fresh attempt without backoff.
+            // delivering a close event, so a long background resume replaces
+            // that lease and starts a fresh attempt without backoff.
             return true;
+          }
+          if (next.reason === "network-path-changed") {
+            // A handoff leaves this lease bound to the interface it was opened
+            // on, so replace it while keeping the ladder.
+            return false;
           }
           if (next.reason === "application-active" || next.reason === "application-active-probe") {
             const probe = yield* lease.session.probe.pipe(
@@ -471,12 +474,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
                   }
                   break;
                 case "Wakeup":
-                  if (
-                    probeEvent.signal.reason === "application-active-reconnect" ||
-                    probeEvent.signal.reason === "network-path-changed"
-                  ) {
+                  if (probeEvent.signal.reason === "application-active-reconnect") {
                     yield* Fiber.interrupt(probe);
                     return true;
+                  }
+                  if (probeEvent.signal.reason === "network-path-changed") {
+                    yield* Fiber.interrupt(probe);
+                    return false;
                   }
                   if (
                     probeEvent.signal.reason === "credentials-changed" &&

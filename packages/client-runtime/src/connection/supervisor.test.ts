@@ -1159,6 +1159,38 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
+  it.effect("keeps the retry ladder when a network path change restarts an attempt", () =>
+    Effect.gen(function* () {
+      const opening = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt === 1 ? Effect.fail(transient()) : Effect.succeed(PREPARED_CONNECTION),
+        ready: (attempt) =>
+          attempt === 1
+            ? Deferred.succeed(opening, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      yield* TestClock.adjust("3 seconds");
+      yield* Deferred.await(opening);
+      yield* harness.wake("network-path-changed");
+
+      // The replacement stays at attempt 2, so a flapping interface cannot hold
+      // the delay at the first rung.
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.attempt === 2,
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("does not let a flapping network path shorten the retry backoff", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
