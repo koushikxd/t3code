@@ -26,7 +26,9 @@ socket stays bound to the old interface while connectivity still reports online,
 so [mobile](../../apps/mobile/src/connection/platform.ts) emits a
 `network-path-changed` wakeup when the default interface type changes. A
 connecting or connected supervisor replaces its lease; every other phase must
-ignore it, because a flapping interface would otherwise shorten backoff and
+ignore it. The replacement also carries the retry ladder over, unlike a
+foreground resume, which resets it. Both rules exist for the same reason: a
+flapping interface is not user intent, and letting it shorten backoff would
 hammer the server for no gain.
 
 Replacement rather than a probe, because a probe cannot answer the question.
